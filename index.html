@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aziatische hoornaar in Nederland: meldingen op de kaart</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<style>
+:root{--bg:#f2f5f4;--panel:#ffffff;--ink:#16262b;--muted:#5b6b70;--line:#d5dedc;--amber:#f2a900;--bar:#c9d6d3}
+@media (prefers-color-scheme:dark){:root{--bg:#10191c;--panel:#18262a;--ink:#e8f0ee;--muted:#9bb0b4;--line:#2b3d42;--bar:#33474c}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:"Familjen Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+#map{position:absolute;inset:0;background:var(--bg)}
+.panel{position:absolute;z-index:1000;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+  left:12px;top:12px;width:320px;max-width:calc(100% - 24px);box-shadow:0 2px 10px rgba(0,0,0,.18)}
+h1{font-size:1.15rem;line-height:1.2;margin:0 0 4px;font-weight:700}
+.sub{margin:0 0 10px;color:var(--muted);font-size:.85rem}
+.count{font-size:2rem;font-weight:700;line-height:1}
+.count small{font-size:.85rem;font-weight:400;color:var(--muted);margin-left:6px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:48px;margin:12px 0 4px}
+.bars div{flex:1;background:var(--bar);border-radius:2px 2px 0 0;min-height:2px;transition:background .15s}
+.bars div.on{background:var(--amber)}
+.ticks{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:8px}
+label{display:flex;justify-content:space-between;font-size:.85rem;margin-top:6px}
+input[type=range]{width:100%;accent-color:var(--amber);margin:2px 0}
+.opt{display:flex;justify-content:flex-start;gap:8px;align-items:center;margin-top:10px;cursor:pointer}
+.status{margin-top:10px;font-size:.82rem;color:var(--muted)}
+.status.err{color:#c0392b}
+.foot{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:.75rem;color:var(--muted)}
+.foot a{color:inherit}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(242,169,0,.35)}
+.marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:rgba(242,169,0,.9);color:#16262b;font-weight:700;font-family:inherit}
+.leaflet-popup-content{font-family:"Familjen Grotesk",system-ui,sans-serif;margin:10px 12px;font-size:.88rem;line-height:1.4}
+@media (max-width:600px){
+  .panel{top:auto;bottom:0;left:0;right:0;width:100%;max-width:100%;border-radius:12px 12px 0 0;padding:12px 14px}
+  .count{font-size:1.6rem}
+  .leaflet-bottom{bottom:0}
+}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Kaart met meldingen van de Aziatische hoornaar"></div>
+
+<section class="panel" aria-label="Filters">
+  <h1>Aziatische hoornaar in Nederland</h1>
+  <p class="sub">Gemelde waarnemingen van Vespa velutina</p>
+  <div class="count"><span id="n">0</span><small id="nlabel">meldingen</small></div>
+  <div class="bars" id="bars" aria-hidden="true"></div>
+  <div class="ticks"><span id="y0"></span><span id="y1"></span></div>
+  <label for="from"><span>Van jaar</span><strong id="fromv"></strong></label>
+  <input type="range" id="from" disabled>
+  <label for="to"><span>Tot en met jaar</span><strong id="tov"></strong></label>
+  <input type="range" id="to" disabled>
+  <label class="opt" for="cluster"><input type="checkbox" id="cluster" checked>Meldingen groeperen</label>
+  <div class="status" id="status" role="status">Meldingen laden…</div>
+  <div class="foot">Data: <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a> (o.a. Waarneming.nl). Kaart: OpenStreetMap, PDOK.</div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script>
+const GBIF = 'https://api.gbif.org/v1';
+const $ = id => document.getElementById(id);
+
+// Kaart
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom: 19, attribution: '&copy; OpenStreetMap-bijdragers'});
+const pdok = L.tileLayer('https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png',
+  {maxZoom: 19, attribution: 'Kaartgegevens &copy; Kadaster'});
+const map = L.map('map', {layers: [osm], zoomControl: true});
+map.fitBounds([[50.75, 3.3], [53.55, 7.25]]);
+L.control.layers({'OpenStreetMap': osm, 'PDOK (Kadaster)': pdok}, null, {position: 'topright'}).addTo(map);
+
+let records = [], layer = null, minY = 0, maxY = 0;
+
+const fmtDate = d => {
+  const t = new Date(d);
+  return isNaN(t) ? 'onbekend' : t.toLocaleDateString('nl-NL', {day: 'numeric', month: 'long', year: 'numeric'});
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function loadAll() {
+  const m = await (await fetch(`${GBIF}/species/match?name=${encodeURIComponent('Vespa velutina')}`)).json();
+  const key = m.speciesKey || m.usageKey;
+  if (!key) throw new Error('Soort niet gevonden');
+  const seen = new Set();
+  let offset = 0, end = false;
+  while (!end) {
+    const url = `${GBIF}/occurrence/search?taxonKey=${key}&country=NL&hasCoordinate=true&hasGeospatialIssue=false&occurrenceStatus=PRESENT&limit=300&offset=${offset}`;
+    const r = await (await fetch(url)).json();
+    for (const o of r.results || []) {
+      if (seen.has(o.key) || o.decimalLatitude == null) continue;
+      seen.add(o.key);
+      const year = o.year || new Date(o.eventDate).getFullYear();
+      if (!year) continue;
+      records.push({key: o.key, lat: o.decimalLatitude, lng: o.decimalLongitude, date: o.eventDate, year,
+        dataset: o.datasetName || o.publishingOrgKey || 'onbekende bron', basis: o.basisOfRecord});
+    }
+    offset += 300;
+    end = r.endOfRecords || offset >= (r.count || 0);
+    $('status').textContent = `Laden… ${records.length} meldingen`;
+  }
+}
+
+function setupControls() {
+  const years = records.map(r => r.year);
+  minY = Math.min(...years); maxY = Math.max(...years);
+  for (const id of ['from', 'to']) {
+    const el = $(id);
+    el.min = minY; el.max = maxY; el.step = 1; el.disabled = false;
+    el.value = id === 'from' ? minY : maxY;
+    el.addEventListener('input', () => {
+      if (+$('from').value > +$('to').value) {
+        if (id === 'from') $('to').value = $('from').value; else $('from').value = $('to').value;
+      }
+      render();
+    });
+  }
+  $('cluster').addEventListener('change', render);
+  $('y0').textContent = minY; $('y1').textContent = maxY;
+  const counts = {};
+  records.forEach(r => counts[r.year] = (counts[r.year] || 0) + 1);
+  const top = Math.max(...Object.values(counts));
+  const bars = $('bars');
+  for (let y = minY; y <= maxY; y++) {
+    const d = document.createElement('div');
+    d.dataset.year = y;
+    d.style.height = Math.max(4, ((counts[y] || 0) / top) * 100) + '%';
+    d.title = `${y}: ${counts[y] || 0}`;
+    bars.appendChild(d);
+  }
+}
+
+function render() {
+  const from = +$('from').value, to = +$('to').value;
+  $('fromv').textContent = from; $('tov').textContent = to;
+  document.querySelectorAll('#bars div').forEach(d => d.classList.toggle('on', +d.dataset.year >= from && +d.dataset.year <= to));
+  const shown = records.filter(r => r.year >= from && r.year <= to);
+  $('n').textContent = shown.length.toLocaleString('nl-NL');
+  $('nlabel').textContent = shown.length === 1 ? 'melding' : 'meldingen';
+  if (layer) map.removeLayer(layer);
+  layer = $('cluster').checked ? L.markerClusterGroup({maxClusterRadius: 40}) : L.layerGroup();
+  for (const r of shown) {
+    L.circleMarker([r.lat, r.lng], {radius: 7, fillColor: '#f2a900', fillOpacity: .95, color: '#16262b', weight: 1.5})
+      .bindPopup(`<strong>${fmtDate(r.date)}</strong><br>Bron: ${esc(r.dataset)}<br><a href="https://www.gbif.org/occurrence/${r.key}" target="_blank" rel="noopener">Bekijk op GBIF</a>`)
+      .addTo(layer);
+  }
+  layer.addTo(map);
+  $('status').textContent = shown.length ? `${shown.length.toLocaleString('nl-NL')} van ${records.length.toLocaleString('nl-NL')} meldingen zichtbaar.` : 'Geen meldingen in deze periode. Vergroot het jaarbereik.';
+}
+
+loadAll().then(() => {
+  if (!records.length) { $('status').textContent = 'Geen meldingen gevonden bij GBIF.'; return; }
+  setupControls();
+  render();
+}).catch(e => {
+  const s = $('status'); s.classList.add('err');
+  s.textContent = 'Laden mislukt. Controleer je verbinding en ververs de pagina. (' + e.message + ')';
+});
+</script>
+</body>
+</html>
